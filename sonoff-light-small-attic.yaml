@@ -1,0 +1,14 @@
+packages:
+  base: !include common/base.yaml
+  sonoff-basic: !include
+    file: common/sonoff-basic.yaml
+    vars:
+      light_name: "Lampe"
+
+esphome:
+  name: sonoff-light-small-attic
+  friendly_name: "Licht Dachboden kleines Zimmer"
+
+wifi:
+  manual_ip:
+    static_ip: 10.5.0.2
