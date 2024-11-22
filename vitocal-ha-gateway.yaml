@@ -1,0 +1,266 @@
+substitutions:
+  name: "vitocal-ha-gateway"
+  friendly_name: Vitocal 060-A
+
+  uart_rx_pin: GPIO5
+  pv_relay_pin: GPIO12
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+
+esp32:
+  board: lolin_s2_mini
+  framework:
+    type: arduino
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+  manual_ip:
+    static_ip: 10.0.0.224
+    gateway: !secret wifi_gateway
+    subnet: !secret wifi_subnet
+    dns1: !secret wifi_dns
+
+api:
+ota:
+improv_serial:
+web_server:
+
+
+logger:
+  level: INFO
+
+switch:
+  - platform: gpio
+    name: "PV relay"
+    pin: 
+      number: ${pv_relay_pin}
+      inverted: True
+
+uart:
+  id: ct_ifh90005
+  rx_pin: ${uart_rx_pin}
+  baud_rate: 38400
+  # Debug hack to avoid the need for a custom component, see: https://community.home-assistant.io/t/how-to-uart-read-without-custom-component/491950
+  debug:
+      direction: RX
+      dummy_receiver: true
+      after:
+        delimiter: "\n"
+      sequence:
+        - lambda: |-
+            std::string message(bytes.begin(), bytes.end());
+
+            // Ignore empty messages.
+            if (message.size() < 2) return;
+
+            ESP_LOGD("ct_ifh90005_debug", "%s", message.c_str());
+
+            // Messages should always start with "#:  ";
+            if (message.rfind("#:  ", 0) != 0) {
+              ESP_LOGE("ct_ifh90005", "Unrecognized message received on UART. Expected message to start with '#', but got '%.4s'.", message.c_str());
+              return;
+            }
+
+            std::vector<uint32_t> fields;
+            fields.reserve(27);
+            size_t pos = 4;
+
+            while (pos < message.length()) {
+              size_t end_pos = message.find(' ', pos);
+              if (end_pos == std::string::npos) {
+                end_pos = message.length();
+              }
+
+              std::string field_str = message.substr(pos, end_pos - pos);
+              uint32_t field = std::stoul(field_str, nullptr, 16);
+              fields.push_back(field);
+              pos = end_pos + 1;
+            }
+
+            if (fields.size() != 27) {
+              ESP_LOGE("ct_ifh90005", "Invalid number of fields in the message. Expected 26, but got %d.", fields.size());
+              return;
+            }
+
+            // Error state. We can't interpret the values yet, but we can at least report a boolean.
+            id(error_state).publish_state(fields[3] != 0);
+
+            // Temperatures (measured and set). First, we publish the raw resistances.
+            id(cylinder_top_ntc_resistance).publish_state(fields[6]);
+            id(air_intake_ntc_resistance).publish_state(fields[7]);
+            id(cylinder_bottom_ntc_resistance).publish_state(fields[8]);
+            id(evaporator_ntc_resistance).publish_state(fields[9]);
+            id(temperature_limit_resistance).publish_state(fields[0]);
+            id(dhw_temperature_resistance).publish_state(fields[1]);
+
+            // Actual calculated temperatures.
+            // Parameters determined using: https://www.thinksrs.com/downloads/programs/therm%20calc/ntccalibrator/ntccalculator.html
+            // based on observed values for field 1 for different set temperatures, namely:
+            // r1: 30584, t1: 40
+            // r2: 40195, t2: 62
+            // r3: 26214: t3: 30
+            constexpr double a = -3.342678709 * 1e-3;
+            constexpr double b = 13.05847218 * 1e-4;
+            constexpr double c = -63.09179040 * 1e-7;
+            auto calculate_temp = [a, b, c](uint32_t r) {
+              if (r == 0) return 0.0;
+              auto log_r = std::log(r);
+              return (1 / (a + b * log_r + c * std::pow(log_r, 3))) - 273.15;
+            };
+
+            id(cylinder_top_ntc_temperature).publish_state(calculate_temp(fields[6]));
+            id(air_intake_ntc_temperature).publish_state(calculate_temp(fields[7]));
+            id(cylinder_bottom_ntc_temperature).publish_state(calculate_temp(fields[8]));
+            id(evaporator_ntc_temperature).publish_state(calculate_temp(fields[9]));
+            id(temperature_limit).publish_state(calculate_temp(fields[0]));
+            id(dhw_temperature).publish_state(calculate_temp(fields[1]));
+
+            // Actuator states (bit field in field 4)
+            id(compressor_state).publish_state(fields[4] & 0b00001);
+            id(heating_coil_state).publish_state(fields[4] & 0b00010);
+            id(fan_slow_state).publish_state(fields[4] & 0b00100);
+            id(fan_high_state).publish_state(fields[4] & 0b01000);
+            id(defrosting_valve_state).publish_state(fields[4] & 0b10000);
+
+            if (fields[5] == 0) id(program).publish_state("ECO");
+            else if (fields[5] == 11) id(program).publish_state("SMART");
+            else if (fields[5] == 3) id(program).publish_state("BOOST");
+            else if (fields[5] == 5) id(program).publish_state("OUT");
+            else if (fields[5] == 2) id(program).publish_state("NIGHT");
+            else id(program).publish_state("<unknown>");
+
+            // PV relay state (on if field 10 is low). I'm unsure about the actual values (on my unit: 91 is low, 123 is high).
+            id(pv_relay_state).publish_state(fields[10] < 100);
+
+sensor:
+  # Raw resistance measurements for NTC and equivalent values for set temperatures.
+  - platform: template
+    id: cylinder_top_ntc_resistance
+    name: "Top cylinder temperature sensor (NTC1) resistance"
+    unit_of_measurement: 'Ω'
+    icon: mdi:resistor
+    accuracy_decimals: 0
+    disabled_by_default: True
+  - platform: template
+    id: cylinder_bottom_ntc_resistance
+    name: "Bottom cylinder temperature sensor (NTC3) resistance"
+    unit_of_measurement: 'Ω'
+    icon: mdi:resistor
+    accuracy_decimals: 0
+    disabled_by_default: True
+  - platform: template
+    id: air_intake_ntc_resistance
+    name: "Air intake temperature sensor (NTC2) resistance"
+    unit_of_measurement: 'Ω'
+    icon: mdi:resistor
+    accuracy_decimals: 0
+    disabled_by_default: True
+  - platform: template
+    id: evaporator_ntc_resistance
+    name: "Evaporator temperature sensor (NTC4) resistance"
+    unit_of_measurement: 'Ω'
+    icon: mdi:resistor
+    accuracy_decimals: 0
+    disabled_by_default: True
+  - platform: template
+    id: temperature_limit_resistance
+    name: "Temperature limit resistance"
+    unit_of_measurement: 'Ω'
+    icon: mdi:resistor
+    accuracy_decimals: 0
+    disabled_by_default: True
+  - platform: template
+    id: dhw_temperature_resistance
+    name: "DHW temperature resistance"
+    unit_of_measurement: 'Ω'
+    icon: mdi:resistor
+    accuracy_decimals: 0
+    disabled_by_default: True
+
+  # Actual temperatures, calculated from the resistances above.
+  - platform: template
+    id: cylinder_top_ntc_temperature
+    name: "Top cylinder temperature"
+    device_class: temperature
+    unit_of_measurement: '°C'
+  - platform: template
+    id: cylinder_bottom_ntc_temperature
+    name: "Bottom cylinder temperature"
+    device_class: temperature
+    unit_of_measurement: '°C'
+  - platform: template
+    id: air_intake_ntc_temperature
+    name: "Air intake temperature"
+    device_class: temperature
+    unit_of_measurement: '°C'
+  - platform: template
+    id: evaporator_ntc_temperature
+    name: "Evaporator temperature"
+    device_class: temperature
+    unit_of_measurement: '°C'
+  - platform: template
+    id: temperature_limit
+    name: "Temperature limit"
+    device_class: temperature
+    unit_of_measurement: '°C'
+    accuracy_decimals: 0
+    disabled_by_default: True
+  - platform: template
+    id: dhw_temperature
+    name: "DHW temperature"
+    device_class: temperature
+    accuracy_decimals: 0
+    unit_of_measurement: '°C'
+
+text_sensor:
+  # Program
+  - platform: template
+    id: program
+    name: Program
+    icon: mdi:tune
+
+binary_sensor:
+  # Actuator states
+  - platform: template
+    id: compressor_state
+    name: "Compressor"
+    device_class: running
+    icon: mdi:heat-pump
+  - platform: template
+    id: heating_coil_state
+    name: "Immersion heater"
+    device_class: running
+    icon: mdi:heating-coil
+  - platform: template
+    id: fan_slow_state
+    name: "Fan (slow speed)"
+    device_class: running
+    icon: mdi:fan-speed-1
+  - platform: template
+    id: fan_high_state
+    name: "Fan (high speed)"
+    device_class: running
+    icon: mdi:fan-speed-2
+  - platform: template
+    id: defrosting_valve_state
+    name: "Diverter valve for defrosting"
+    device_class: opening
+    icon: mdi:snowflake-melt
+
+  # PV relay
+  - platform: template
+    id: pv_relay_state
+    name: "PV relay state"
+    icon: mdi:solar-power-variant
+    disabled_by_default: true
+
+  # Error state
+  - platform: template
+    id: error_state
+    name: "Fault message"
+    device_class: problem
+    disabled_by_default: True
