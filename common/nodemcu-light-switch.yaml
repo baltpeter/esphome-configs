@@ -1,0 +1,40 @@
+packages:
+  base: !include base.yaml
+
+esp8266:
+  board: nodemcu
+
+# Note: You need to follow these steps for this to work after adding the device
+# to Home Assistant: https://esphome.io/components/api.html#actions
+binary_sensor:
+  - platform: gpio
+    id: button1
+    pin:
+      number: D1
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+    on_press:
+      - homeassistant.action:
+          action: light.toggle
+          data:
+            entity_id: light.sonoff_light_large_attic_lampe
+  - platform: gpio
+    id: button2
+    pin:
+      number: D2
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+    on_press:
+      - homeassistant.action:
+          action: light.toggle
+          data:
+            entity_id: light.sonoff_light_small_attic_lampe
+
+status_led:
+  pin:
+    number: GPIO2
+    inverted: yes

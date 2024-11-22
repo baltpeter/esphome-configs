@@ -1,0 +1,11 @@
+packages:
+  base: !include common/base.yaml
+  nodemcu-light-switch: !include common/nodemcu-light-switch.yaml
+
+esphome:
+  name: switch-light-attic-2
+  friendly_name: Attic light switch 2
+
+wifi:
+  manual_ip:
+    static_ip: 10.5.0.4
