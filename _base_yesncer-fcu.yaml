@@ -1,0 +1,79 @@
+esphome:
+  name: yesncer-fcu-$device_id
+
+rtl87xx:
+  board: wbr3
+  family: rtl8720c
+  framework:
+    version: 0.0.0
+    source: https://github.com/baltpeter/libretiny.git#b_wbr3
+
+time:
+  - platform: homeassistant
+    id: homeassistant_time
+    timezone: Europe/Berlin
+
+uart:
+  id: tuya_uart
+  # https://developer.tuya.com/en/docs/iot/wbr3-module-datasheet?id=K9dujs2k5nriy#title-5-Pin%20definition
+  rx_pin: GPIO13
+  tx_pin: GPIO14
+  baud_rate: 9600
+
+tuya:
+  uart_id: tuya_uart
+  time_id: homeassistant_time
+
+switch:
+  - platform: tuya
+    name: "Power"
+    switch_datapoint: 1
+    icon: "mdi:hvac"
+  - platform: tuya
+    name: "Child lock"
+    switch_datapoint: 14
+    icon: "mdi:lock"
+
+select:
+  - platform: tuya
+    name: "Mode"
+    enum_datapoint: 2
+    options:
+      0: cool
+      1: heat
+      2: wind
+    icon: "mdi:alpha-m"
+  - platform: tuya
+    name: "Fan speed"
+    enum_datapoint: 12
+    options:
+      0: auto
+      1: silent
+      2: low
+      3: medium
+      4: medium high
+      5: high
+    icon: "mdi:fan"
+
+number:
+  - platform: tuya
+    name: "Measured temperature"
+    number_datapoint: 9
+    min_value: 0
+    max_value: 50
+    step: 1
+    icon: "mdi:home-thermometer"
+    device_class: temperature
+    unit_of_measurement: "C"
+  - platform: tuya
+    name: "Set temperature"
+    number_datapoint: 101
+    datapoint_hidden:
+      datapoint_type: int
+    min_value: 0
+    max_value: 50
+    mode: box
+    step: 1
+    icon: "mdi:temperature-celsius"
+    device_class: temperature
+    unit_of_measurement: "C"

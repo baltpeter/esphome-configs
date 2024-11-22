@@ -1,0 +1,28 @@
+# Base config for all devices, inspired by: https://simplyexplained.com/blog/how-i-structure-my-esphome-config-files/
+logger:
+
+api:
+  encryption:
+    key: !secret esphome_api_password
+
+ota:
+  - platform: esphome
+    password: !secret esphome_api_password
+
+wifi:
+  networks:
+  - ssid: !secret wifi1_ssid
+    password: !secret wifi1_password
+  - ssid: !secret wifi2_ssid
+    password: !secret wifi2_password
+  - ssid: !secret wifi3_ssid
+    password: !secret wifi3_password
+
+  # Fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: ${friendly_name} fallback AP
+    password: !secret esphome_fallback_ap_password
+
+captive_portal:
+
+web_server:

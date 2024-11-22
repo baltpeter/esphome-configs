@@ -1,0 +1,6 @@
+substitutions:
+  device_id: "11"
+  friendly_name: "Yesncer FCU 11"
+
+<<: !include _base.yaml
+<<: !include _base_yesncer-fcu.yaml
